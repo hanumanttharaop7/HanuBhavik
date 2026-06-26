@@ -1,0 +1,14 @@
+CLASS zcl_f_wrap_bapi_cc DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PRIVATE .
+
+  PUBLIC SECTION.
+    CLASS-METHODS create_instance
+      IMPORTING
+        !destination  TYPE rfcdest OPTIONAL
+      RETURNING
+        VALUE(result) TYPE REF TO zif_wrap_bapi_cc.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+ENDCLASS.
