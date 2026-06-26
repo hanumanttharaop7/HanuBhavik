@@ -1,0 +1,15 @@
+INTERFACE zif_wrap_bapi_cc
+  PUBLIC .
+  TYPES : tt_cc_list TYPE TABLE OF bapi0012_ccinputlist,
+          tt_return  TYPE TABLE OF bapiret2.
+
+  METHODS bapi_cc_create
+    IMPORTING
+      controllingarea   TYPE bapi0012_gen-co_area
+      testrun           TYPE bapi0012_gen-testrun OPTIONAL
+      im_costcenterlist TYPE tt_cc_list
+    EXPORTING
+      ex_return         TYPE tt_return.
+
+
+ENDINTERFACE.
