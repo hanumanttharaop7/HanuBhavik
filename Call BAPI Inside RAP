@@ -1,0 +1,272 @@
+CLASS lsc_zi_0226_cc DEFINITION INHERITING FROM cl_abap_behavior_saver.
+  PUBLIC SECTION.
+    TYPES : tt_cc TYPE TABLE OF bapi0012_ccinputlist WITH DEFAULT KEY.
+    DATA:lt_return_all TYPE TABLE OF bapiret2.
+  PROTECTED SECTION.
+
+    METHODS save_modified REDEFINITION.
+
+
+ENDCLASS.
+
+CLASS lsc_zi_0226_cc IMPLEMENTATION.
+
+  METHOD save_modified.
+
+    " for creating records in DB
+    IF create-costcenter IS NOT INITIAL.
+      DATA: lt_cc_create TYPE TABLE OF zt0226_cc.
+      "step -1
+      LOOP AT create-costcenter ASSIGNING FIELD-SYMBOL(<fs_create>)
+                               GROUP BY (   costctrhiergrp = <fs_create>-CostctrHierGrp
+                                         ) INTO DATA(ls_grp).
+        "step - 2
+        DATA(lt_cc) = VALUE tt_cc( FOR w_grp IN create-costcenter
+                                                    WHERE ( CostctrHierGrp = ls_grp-costctrhiergrp )
+                                           (
+
+                                             costcenter       = w_grp-Costcenter
+                                             costctr_hier_grp = w_grp-CostctrHierGrp
+                                             valid_from = w_grp-ValidFrom
+                                             valid_to = w_grp-ValidTo
+                                             comp_code = w_grp-CompCode
+                                             costcenter_type = w_grp-CostcenterType
+                                             name = w_grp-Name
+                                             person_in_charge = w_grp-PersonInCharge
+*                                      profit_ctr = w_grp-ProfitCtr
+                                            )
+                                         ).
+        " step - 3 call the bapi
+        zcl_f_wrap_bapi_cc=>create_instance(  )->bapi_cc_create(
+                  EXPORTING
+                    controllingarea   = CONV kokrs( ls_grp-costctrhiergrp )
+                    im_costcenterlist = lt_cc
+                    IMPORTING
+                     ex_return         = DATA(lt_return)
+                ).
+        " step - 4 msg type and text
+        DELETE lt_return WHERE type = 'W'.
+        DATA(lv_type) = VALUE #( lt_return[ 1 ]-type OPTIONAL ) .
+        DATA(lv_text) = VALUE #( lt_return[ 1 ]-message OPTIONAL ) .
+        " step - 5  let me create a internal table type zt0226_cc to fill the table
+        lt_cc_create = VALUE #( BASE lt_cc_create FOR w_grp IN create-costcenter
+                                                                    WHERE (
+                                                                         CostctrHierGrp = ls_grp-costctrhiergrp
+
+                                                                         )
+                                 (
+                                 costcenter = w_grp-Costcenter
+                                 costctr_hier_grp = w_grp-CostctrHierGrp
+                                 valid_to = w_grp-ValidTo
+                                 valid_from = w_grp-ValidFrom
+                                 comp_code = w_grp-CompCode
+                                 costcenter_type = w_grp-CostcenterType
+                                 name = w_grp-Name
+                                 person_in_charge = w_grp-PersonInCharge
+                                 profit_ctr = w_grp-ProfitCtr
+                                 status = COND #( WHEN lv_type IS INITIAL THEN 'S' ELSE lv_type )
+                                  msg_txt = lv_text
+                                  )
+                                                             ).
+        CLEAR: lt_return.
+      ENDLOOP.
+     " step - 6 Save Data
+      INSERT zt0226_cc FROM TABLE @lt_cc_create.
+*      INSERT zt0226_cc FROM TABLE @create-costcenter  MAPPING FROM ENTITY.
+    ENDIF.
+    "update
+    IF update-costcenter IS NOT INITIAL.
+      UPDATE zt0226_cc FROM TABLE @update-costcenter
+      INDICATORS SET STRUCTURE %control MAPPING FROM ENTITY.
+    ENDIF.
+    "delete
+    LOOP AT delete-costcenter ASSIGNING FIELD-SYMBOL(<fs_del>).
+      DELETE FROM zt0226_cc WHERE costcenter = @<fs_del>-Costcenter
+                            AND costctr_hier_grp = @<fs_del>-CostctrHierGrp
+                            AND valid_to = @<fs_del>-ValidTo.
+
+      DELETE FROM zt0226_cc_d WHERE costcenter = @<fs_del>-Costcenter
+                            AND costctrhiergrp = @<fs_del>-CostctrHierGrp
+                            AND validto = @<fs_del>-ValidTo.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+
+ENDCLASS.
+
+CLASS lhc_CostCenter DEFINITION INHERITING FROM cl_abap_behavior_handler.
+  PRIVATE SECTION.
+
+    METHODS get_instance_authorizations FOR INSTANCE AUTHORIZATION
+      IMPORTING keys REQUEST requested_authorizations FOR CostCenter RESULT result.
+
+    METHODS downloadTemplate FOR MODIFY
+      IMPORTING keys FOR ACTION CostCenter~downloadTemplate.
+
+    METHODS uploadExcel FOR MODIFY
+      IMPORTING keys FOR ACTION CostCenter~uploadExcel.
+
+ENDCLASS.
+
+CLASS lhc_CostCenter IMPLEMENTATION.
+
+  METHOD get_instance_authorizations.
+  ENDMETHOD.
+
+  METHOD downloadTemplate.
+
+  ENDMETHOD.
+
+  METHOD uploadExcel.
+    DATA: lt_excel        TYPE STANDARD TABLE OF zbp_i_0226_cc=>gty_excel,
+          lt_data_create  TYPE TABLE FOR CREATE zi_0226_cc,
+          lt_data_key     TYPE TABLE FOR READ IMPORT zi_0226_cc,
+          lt_excel_temp   TYPE TABLE OF zi_0226_cc,
+          lv_file_content TYPE xstring.
+    TYPES : tt_filter TYPE SORTED TABLE OF zi_0226_cc WITH UNIQUE DEFAULT KEY.
+    lv_file_content = keys[ 1 ]-%param-fileContent.
+
+    DATA(lo_document)  = xco_cp_xlsx=>document->for_file_content( lv_file_content )->read_access( ).
+
+    DATA(lo_worksheet) = lo_document->get_workbook( )->worksheet->at_position( 1 ).
+
+    DATA(o_sel_pattern) = xco_cp_xlsx_selection=>pattern_builder->simple_from_to(
+                               )->from_row( xco_cp_xlsx=>coordinate->for_numeric_value( 2 ) " *** Start reading from ROW 2 to skip the header ***
+                               )->get_pattern( ).
+
+    lo_worksheet->select( o_sel_pattern
+    )->row_stream(
+    )->operation->write_to( REF #( lt_excel )
+    )->set_value_transformation(
+    xco_cp_xlsx_read_access=>value_transformation->string_value
+    )->execute( ).
+
+    lt_excel_temp = CORRESPONDING #(  lt_excel MAPPING  Costcenter = costcenter
+                                                        CostcenterType = costcentertype
+                                                        CostctrHierGrp = costcentergrp
+                                                        CompCode       = companycode
+                                                        ValidFrom      = validfrom
+                                                        ValidTo        = validto
+                                                        Name           = name
+                                                        PersonInCharge = personresp
+                                                        ProfitCtr = profitcenter
+                                                        ).
+    " old data present in table
+    SELECT * FROM zi_0226_cc FOR ALL ENTRIES IN @lt_excel_temp
+    WHERE Costcenter = @lt_excel_temp-costcenter
+    AND CostctrHierGrp = @lt_excel_temp-CostctrHierGrp
+    AND ValidTo = @lt_excel_temp-validto
+    INTO TABLE @DATA(lt_existing).
+
+
+    IF lt_existing IS NOT INITIAL.
+      " create a filter table
+
+      DATA(lt_filter_old) = VALUE tt_filter( FOR wa_old IN lt_existing
+                                              ( Costcenter = wa_old-Costcenter
+                                              CostctrHierGrp = wa_old-CostctrHierGrp
+                                              ValidTo = wa_old-ValidTo
+                                              )
+                                              ).
+
+
+
+      lt_data_key = CORRESPONDING #( lt_filter_old  ).
+
+
+      MODIFY ENTITIES OF zi_0226_cc IN LOCAL MODE
+      ENTITY CostCenter
+      UPDATE FROM VALUE #( FOR wa_key IN lt_data_key
+                           FOR wa_modify IN lt_existing
+                                   WHERE (
+                                   Costcenter         = wa_key-Costcenter
+                                   AND CostctrHierGrp = wa_key-CostctrHierGrp
+                                   AND ValidTo        = wa_key-ValidTo )
+                           ( %tky          = wa_key-%tky
+                            ValidFrom      = wa_modify-ValidFrom
+                            CompCode       = wa_modify-CompCode
+                            CostcenterType = wa_modify-CostcenterType
+                            Name      = wa_modify-Name
+                            ProfitCtr = wa_modify-ProfitCtr
+                            PersonInCharge = wa_modify-PersonInCharge
+                            %control-ValidFrom = if_abap_behv=>mk-on
+                            %control-CompCode = if_abap_behv=>mk-on
+                            %control-CostcenterType = if_abap_behv=>mk-on
+                            %control-Name = if_abap_behv=>mk-on
+                            %control-ProfitCtr = if_abap_behv=>mk-on
+                            %control-PersonInCharge = if_abap_behv=>mk-on
+                   )
+                  )
+                  MAPPED DATA(lt_mapped_upd)
+                  REPORTED DATA(lt_reported_up)
+                  FAILED DATA(lt_failed_upd).
+
+      DATA(lt_create) = FILTER tt_filter( lt_excel_temp EXCEPT IN lt_filter_old
+                                             WHERE Costcenter = Costcenter
+                                             AND CostctrHierGrp = CostctrHierGrp
+                                             AND Validto = ValidTo
+                                        ).
+
+      IF lt_create IS NOT INITIAL.
+        lt_excel = CORRESPONDING #(  lt_create MAPPING  Costcenter     = costcenter
+                                                        CostcenterType = costcentertype
+                                                        costcentergrp  = CostctrHierGrp
+                                                        companycode    = CompCode
+                                                        ValidFrom      = validfrom
+                                                        ValidTo        = validto
+                                                        Name           = name
+                                                        personresp     = PersonInCharge
+                                                        profitcenter   = ProfitCtr
+                                                                ).
+      ENDIF.
+    ENDIF.
+
+    IF lines(  lt_existing ) <> lines(  lt_excel ).
+      lt_data_create = VALUE #( FOR wa IN lt_excel INDEX INTO lv_index
+                                ( %cid = |CID_{ lv_index }|
+                                  %data = VALUE #(
+                                  Costcenter     = wa-costcenter
+                                  CostctrHierGrp = wa-costcentergrp
+                                  ValidTo        = wa-validto
+                                  validfrom      = wa-validfrom
+                                  CompCode       = wa-companycode
+                                  CostcenterType = wa-costcentertype
+                                  Name           = wa-name
+                                  PersonInCharge = wa-personresp
+                                  ProfitCtr      = wa-profitcenter
+
+                                 )
+                                  %control = VALUE #(
+                                  Costcenter     = if_abap_behv=>mk-on
+                                  CostctrHierGrp = if_abap_behv=>mk-on
+                                  ValidTo        = if_abap_behv=>mk-on
+                                  ValidFrom      = if_abap_behv=>mk-on
+                                  CompCode       = if_abap_behv=>mk-on
+                                  CostcenterType = if_abap_behv=>mk-on
+                                  name           = if_abap_behv=>mk-on
+                                  PersonInCharge = if_abap_behv=>mk-on
+                                  ProfitCtr      = if_abap_behv=>mk-on
+
+                                  )
+
+                                  )
+
+                               ).
+
+      MODIFY ENTITIES OF zi_0226_cc IN LOCAL MODE
+      ENTITY CostCenter
+      CREATE FIELDS ( Costcenter CostctrHierGrp ValidTo ValidFrom CostcenterType CompCode Name PersonInCharge ProfitCtr )
+      WITH lt_data_create
+      MAPPED   DATA(lt_mapped)
+      REPORTED DATA(lt_reported)
+      FAILED   DATA(lt_failed).
+
+    ENDIF.
+
+
+  ENDMETHOD.
+
+
+ENDCLASS.
